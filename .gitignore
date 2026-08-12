@@ -1,0 +1,9 @@
+build/
+out/
+*.o
+*.obj
+*.exe
+.vs/
+.vscode/
+CMakeFiles/
+CMakeCache.txt
