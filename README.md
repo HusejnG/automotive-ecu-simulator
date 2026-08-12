@@ -32,7 +32,7 @@ duplicating bit-packing logic here.
 
 ## Roadmap
 
-- [ ] **Virtual CAN bus** — arbitration by message ID priority, frame
+- [x] **Virtual CAN bus** — arbitration by message ID priority, frame
       structure, publish/subscribe delivery to multiple ECU nodes
 - [ ] **BMS ECU node** — AUTOSAR-style software component with a state
       machine (Charging, Discharging, Fault, Balancing, Sleep), sending

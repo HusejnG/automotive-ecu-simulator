@@ -13,8 +13,6 @@ find_package(Threads REQUIRED)
 # ---------------------------------------------------------------------------
 # Main executable
 # ---------------------------------------------------------------------------
-# NOTE: this is a scaffold. src/main.cpp is currently a placeholder; modules
-# under include/ are added incrementally per the roadmap in README.md.
 add_executable(ecu_simulator src/main.cpp)
 target_include_directories(ecu_simulator PRIVATE include)
 target_link_libraries(ecu_simulator PRIVATE Threads::Threads)
@@ -42,7 +40,7 @@ if(BUILD_TESTS)
 
   enable_testing()
 
-  add_executable(ecu_tests tests/test_placeholder.cpp)
+  add_executable(ecu_tests tests/test_can_bus.cpp)
   target_include_directories(ecu_tests PRIVATE include)
   target_link_libraries(ecu_tests PRIVATE gtest_main Threads::Threads)
 
