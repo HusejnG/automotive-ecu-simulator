@@ -11,10 +11,24 @@ endif()
 find_package(Threads REQUIRED)
 
 # ---------------------------------------------------------------------------
+# External dependency: bit-protocol-parser (own library, pulled from GitHub)
+# ---------------------------------------------------------------------------
+# Used by ecu_nodes/bms_node.h to encode CAN status frames -- rather than
+# duplicating bit-packing logic here, the ECU simulator depends on the
+# standalone, independently-tested codec project.
+include(FetchContent)
+FetchContent_Declare(
+  bit_protocol_parser
+  GIT_REPOSITORY https://github.com/HusejnG/bit-protocol-parser.git
+  GIT_TAG        main
+)
+FetchContent_MakeAvailable(bit_protocol_parser)
+
+# ---------------------------------------------------------------------------
 # Main executable
 # ---------------------------------------------------------------------------
 add_executable(ecu_simulator src/main.cpp)
-target_include_directories(ecu_simulator PRIVATE include)
+target_include_directories(ecu_simulator PRIVATE include ${bit_protocol_parser_SOURCE_DIR}/include)
 target_link_libraries(ecu_simulator PRIVATE Threads::Threads)
 
 if(MSVC)
@@ -29,7 +43,6 @@ endif()
 option(BUILD_TESTS "Build unit tests" ON)
 
 if(BUILD_TESTS)
-  include(FetchContent)
   FetchContent_Declare(
     googletest
     GIT_REPOSITORY https://github.com/google/googletest.git
@@ -40,8 +53,8 @@ if(BUILD_TESTS)
 
   enable_testing()
 
-  add_executable(ecu_tests tests/test_can_bus.cpp)
-  target_include_directories(ecu_tests PRIVATE include)
+  add_executable(ecu_tests tests/test_can_bus.cpp tests/test_bms_node.cpp)
+  target_include_directories(ecu_tests PRIVATE include ${bit_protocol_parser_SOURCE_DIR}/include)
   target_link_libraries(ecu_tests PRIVATE gtest_main Threads::Threads)
 
   include(GoogleTest)
