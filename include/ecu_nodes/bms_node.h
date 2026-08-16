@@ -74,6 +74,14 @@ public:
 
     BmsState state() const { return state_; }
 
+    // Exposes current sensor readings for other components (e.g. the UDS
+    // server) to read -- mirrors how a real UDS ReadDataByIdentifier
+    // handler would pull a live value out of another module.
+    double voltage() const { return voltage_; }
+    double current() const { return current_; }
+    double temperature() const { return temperature_; }
+    double stateOfCharge() const { return soc_; }
+
     static constexpr double kFaultTempC = 60.0;
     static constexpr double kMinVoltageV = 0.0;
     static constexpr double kMaxVoltageV = 500.0;

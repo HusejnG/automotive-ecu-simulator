@@ -38,7 +38,7 @@ duplicating bit-packing logic here — pulled in directly via CMake
 - [x] **BMS ECU node** — AUTOSAR-style software component with a state
       machine (Sleep, Charging, Discharging, Balancing, Fault), sending
       status frames over the virtual bus
-- [ ] **UDS diagnostics** — `DiagnosticSessionControl`,
+- [x] **UDS diagnostics** — `DiagnosticSessionControl`,
       `ReadDataByIdentifier`, and a `SecurityAccess` seed-key exchange
 - [ ] **Fault injection layer** — simulated sensor dropout / bus message
       loss, verifying the BMS transitions to a fail-safe state correctly
@@ -63,6 +63,70 @@ worked with the real tooling, rather than something to bolt on here just
 to check a box. `VirtualCanBus` captures the architectural idea (loose
 coupling through ports, not direct calls) without the code-generation
 machinery behind it.
+
+## UDS diagnostics
+
+`UdsServer` implements three ISO 14229 services against the BMS node:
+
+- **`0x10` DiagnosticSessionControl** — switch between Default/Programming/
+  Extended sessions
+- **`0x22` ReadDataByIdentifier** — read live BMS values (pack voltage,
+  current, state of charge, temperature) by a 2-byte data identifier,
+  plus a standard-ish `0xF186` "active session" DID
+- **`0x27` SecurityAccess** — seed/key challenge-response. The seed/key
+  transform here is a simple, deterministic XOR (`key = seed ^ 0xA5A5`),
+  chosen to demonstrate the challenge-response *mechanism* clearly, not
+  as a real security boundary — production seed/key algorithms are
+  OEM-proprietary and considerably more involved.
+
+Sample output from the demo driver, running a full tester sequence
+against a live BMS:
+
+```
+=== UDS diagnostic tester sequence ===
+-> DiagnosticSessionControl (Extended)
+  bus delivered frame id=0x7a0 data=10 03
+  bus delivered frame id=0x7a8 data=50 03
+-> SecurityAccess: request seed
+  bus delivered frame id=0x7a0 data=27 01
+  bus delivered frame id=0x7a8 data=67 01 21 11
+-> SecurityAccess: send key (computed from seed 0x2111)
+  bus delivered frame id=0x7a0 data=27 02 84 b4
+  bus delivered frame id=0x7a8 data=67 02
+   security unlocked: yes
+-> ReadDataByIdentifier: pack voltage (DID 0x1001)
+  bus delivered frame id=0x7a0 data=22 10 01
+  bus delivered frame id=0x7a8 data=62 10 01 96 64
+-> ReadDataByIdentifier: active session (DID 0xF186)
+  bus delivered frame id=0x7a0 data=22 f1 86
+  bus delivered frame id=0x7a8 data=62 f1 86 03
+```
+
+The voltage response (`96 64` = 0x9664 = 38500 raw, ×0.01 = 385.00V)
+matches the BMS's actual charging voltage at that point in the demo —
+confirming the UDS server is reading a live value out of the BMS node,
+not a hardcoded one.
+
+### A bug this module surfaced in the CAN bus itself
+
+Wiring up request/response services exposed a real bug in
+`VirtualCanBus::process()`: when a subscriber's `onFrameReceived()`
+callback called `bus.send()` to publish a response — a diagnostic server
+answering a request while the bus was still iterating over the batch
+that request came from — the response frame got pushed onto the same
+`pending_` vector currently being iterated. That's undefined behavior
+(the loop could read a reallocated/invalidated vector), and it did in
+fact segfault one of the UDS tests before the fix.
+
+The fix: `process()` now swaps `pending_` into a local vector *before*
+iterating, so anything a callback sends during processing lands in a
+fresh queue and is delivered on the *next* `process()` call instead of
+corrupting the current one. This also happens to match real CAN
+behavior more closely — a response is a new arbitration cycle, not an
+instantaneous echo of the request. The CAN bus tests from the previous
+module didn't catch this because nothing in that module ever sent a
+frame from inside a receive callback; it took a request/response
+service to surface it.
 
 ## BMS state machine
 

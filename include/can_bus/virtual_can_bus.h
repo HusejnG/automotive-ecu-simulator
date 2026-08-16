@@ -46,16 +46,28 @@ public:
     // Sorts pending frames by ID (lower ID = higher priority, same as
     // real CAN arbitration) and delivers each to every subscriber in
     // that order, then clears the queue.
+    //
+    // Frames sent by a subscriber's onFrameReceived() *during* this call
+    // (e.g. a diagnostic server responding to a request) are safe to
+    // queue, but are deliberately deferred to the *next* process() call
+    // rather than delivered within this same pass -- swapping pending_
+    // out before iterating means new sends land in a fresh, empty queue
+    // instead of the one currently being iterated (which would otherwise
+    // invalidate iterators and corrupt the queue). This also mirrors
+    // real CAN behavior: a response is a new arbitration cycle, not an
+    // instantaneous echo of the request.
     void process() {
-        std::stable_sort(pending_.begin(), pending_.end(),
+        std::vector<CanFrame> batch;
+        batch.swap(pending_);
+
+        std::stable_sort(batch.begin(), batch.end(),
             [](const CanFrame& a, const CanFrame& b) { return a.id < b.id; });
 
-        for (const auto& frame : pending_) {
+        for (const auto& frame : batch) {
             for (auto* node : subscribers_) {
                 node->onFrameReceived(frame);
             }
         }
-        pending_.clear();
     }
 
     std::size_t pendingCount() const { return pending_.size(); }
