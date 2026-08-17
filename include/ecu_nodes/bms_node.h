@@ -59,6 +59,13 @@ public:
     // these would come from ADC drivers; here the caller (main/tests)
     // plays that role.
     void updateSensors(double voltageV, double currentA, double temperatureC, double socPercent) {
+        bool identicalToLastReading =
+            hasPreviousReading_ &&
+            voltageV == voltage_ && currentA == current_ &&
+            temperatureC == temperature_ && socPercent == soc_;
+        identicalReadingStreak_ = identicalToLastReading ? identicalReadingStreak_ + 1 : 0;
+        hasPreviousReading_ = true;
+
         voltage_ = voltageV;
         current_ = currentA;
         temperature_ = temperatureC;
@@ -88,14 +95,23 @@ public:
     static constexpr double kFullSocPercent = 100.0;
     static constexpr double kCriticalLowSocPercent = 2.0;
     static constexpr double kCurrentEpsilonA = 0.05;
+    // A sensor that reports the exact same value for this many
+    // consecutive ticks is treated as stuck/frozen rather than trusted,
+    // even if the frozen value itself looks physically plausible --
+    // real sensor noise means a perfectly constant reading over time is
+    // itself a red flag. This is a heuristic, not a certainty: chosen
+    // high enough that a genuinely idle, quiet system won't false-trigger
+    // in the demo/tests, but low enough to catch a stuck sensor quickly.
+    static constexpr int kStuckSensorStreakThreshold = 5;
 
 private:
     void evaluateTransitions() {
         bool outOfSafeRange = (temperature_ > kFaultTempC) ||
                                (voltage_ < kMinVoltageV) ||
                                (voltage_ > kMaxVoltageV);
+        bool sensorStuck = identicalReadingStreak_ >= kStuckSensorStreakThreshold;
 
-        if (outOfSafeRange) {
+        if (outOfSafeRange || sensorStuck) {
             state_ = BmsState::Fault;
             return;
         }
@@ -153,4 +169,7 @@ private:
     double current_ = 0.0;
     double temperature_ = 0.0;
     double soc_ = 0.0;
+
+    bool hasPreviousReading_ = false;
+    int identicalReadingStreak_ = 0;
 };

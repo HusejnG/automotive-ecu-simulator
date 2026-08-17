@@ -40,7 +40,7 @@ duplicating bit-packing logic here — pulled in directly via CMake
       status frames over the virtual bus
 - [x] **UDS diagnostics** — `DiagnosticSessionControl`,
       `ReadDataByIdentifier`, and a `SecurityAccess` seed-key exchange
-- [ ] **Fault injection layer** — simulated sensor dropout / bus message
+- [x] **Fault injection layer** — simulated sensor dropout / bus message
       loss, verifying the BMS transitions to a fail-safe state correctly
 - [ ] **Python tooling** — test automation harness and log parsing/visualization
 - [x] **Unit tests** covering each module so far (Google Test)
@@ -202,6 +202,71 @@ cd build
 ctest --output-on-failure              # Linux / macOS
 ctest --output-on-failure -C Release   # Windows (MSVC / Visual Studio)
 ```
+
+## Fault injection
+
+Passing tests that only feed the BMS good data prove it works when
+nothing goes wrong -- they don't prove it fails *safely* when something
+does. Two independent things get corrupted here, deliberately at
+different layers of the system:
+
+**`FaultInjector`** sits between the "sensor" and the BMS, corrupting
+readings before `updateSensors()` sees them:
+- **Out-of-range voltage/temperature** -- values BmsNode's existing range
+  checks already catch (covered in the BMS module's own tests; here
+  they're driven through the injector instead of hardcoded directly).
+- **Stuck sensor** -- freezes on the *first* reading it sees and repeats
+  it forever. This one exposed a real gap: a frozen-but-plausible
+  reading (e.g. a constant 380V/25°C) doesn't look wrong to a naive
+  range check, since nothing about the value itself is out of bounds.
+  Only the fact that it never changes is the tell. `BmsNode` now tracks
+  how many consecutive ticks a reading stays bit-identical and treats
+  five in a row as a fault -- a heuristic (real sensor noise means a
+  perfectly constant reading over time is itself suspicious), not a
+  certainty, and documented as such in `bms_node.h`.
+
+**`LossyRelay`** sits between the bus and a consumer, deterministically
+dropping every Nth frame instead of forwarding it -- simulating the
+message loss real CAN wiring produces under electrical noise or a
+marginal connection. This tests something different from the injector
+above: not whether the BMS detects bad *data*, but whether a downstream
+consumer tolerates *missing* data instead of assuming every frame it
+expects will arrive.
+
+Demo output -- a stuck sensor reporting a constant, individually
+plausible reading, only flagged once it's been frozen for 6 ticks:
+
+```
+=== Fault injection: stuck sensor ===
+tick 1 (frozen, in-range reading) -> state: Sleep
+tick 2 (frozen, in-range reading) -> state: Sleep
+tick 3 (frozen, in-range reading) -> state: Sleep
+tick 4 (frozen, in-range reading) -> state: Sleep
+tick 5 (frozen, in-range reading) -> state: Sleep
+tick 6 (frozen, in-range reading) -> state: Fault
+```
+
+And a lossy relay dropping every 2nd frame between the bus and a tester:
+
+```
+=== Fault injection: lossy CAN relay ===
+relay: 4 frames seen, 2 dropped, 2 delivered to tester
+```
+
+## Planned extension: real hardware bridge
+
+Right now this is a software-in-the-loop simulation — everything runs
+in-process, with no real CAN hardware involved. A natural next step once
+the core roadmap is done: bridge `VirtualCanBus` to a real ELM327-based
+OBD-II adapter (I have one I've used with FORScan for Ford diagnostics,
+plus a couple of generic ones) over a serial connection, so a real
+diagnostic tool could talk UDS to this simulator — or so this simulator
+could be pointed at data captured from a real vehicle. That would turn
+this from a portfolio demo into an actual software-in-the-loop test rig,
+which is a real, valued pattern in automotive tooling (testing
+diagnostic software without needing real ECU hardware on the bench).
+This isn't implemented yet — noting it here as a deliberate next step,
+not a finished feature.
 
 ## Related projects
 

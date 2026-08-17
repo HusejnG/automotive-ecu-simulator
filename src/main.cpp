@@ -9,6 +9,8 @@
 #include "can_bus/virtual_can_bus.h"
 #include "diagnostics/uds_server.h"
 #include "ecu_nodes/bms_node.h"
+#include "fault_injection/fault_injector.h"
+#include "fault_injection/lossy_relay.h"
 
 #include <iomanip>
 #include <iostream>
@@ -92,6 +94,42 @@ int main() {
     bus.send(CanFrame(0x7A0, {0x22, 0xF1, 0x86}));
     bus.process();
     bus.process(); // deliver the response generated above
+
+    std::cout << "\n=== Fault injection: stuck sensor ===\n";
+    {
+        VirtualCanBus faultBus;
+        BmsNode faultBms(faultBus, 0x200);
+        FaultInjector injector;
+        injector.injectFault(FaultType::StuckSensor);
+
+        SensorReading nominal{380.0, 0.0, 25.0, 50.0}; // plausible on its own
+        for (int i = 1; i <= BmsNode::kStuckSensorStreakThreshold + 1; ++i) {
+            SensorReading reading = injector.apply(nominal);
+            faultBms.updateSensors(reading.voltage, reading.current, reading.temperature, reading.soc);
+            faultBms.tick();
+            faultBus.process();
+            std::cout << "tick " << i << " (frozen, in-range reading) -> state: "
+                       << toString(faultBms.state()) << "\n";
+        }
+    }
+
+    std::cout << "\n=== Fault injection: lossy CAN relay ===\n";
+    {
+        VirtualCanBus lossyBus;
+        TesterNode lossyTester;
+        LossyRelay relay(lossyTester, /*dropEveryNth=*/2);
+        lossyBus.subscribe(&relay);
+
+        BmsNode lossyBms(lossyBus, 0x200);
+        for (int i = 0; i < 4; ++i) {
+            lossyBms.updateSensors(380.0 + i, 5.0, 25.0, 50.0 + i);
+            lossyBms.tick();
+            lossyBus.process();
+        }
+        std::cout << "relay: " << relay.receivedCount() << " frames seen, "
+                   << relay.droppedCount() << " dropped, "
+                   << (relay.receivedCount() - relay.droppedCount()) << " delivered to tester\n";
+    }
 
     return 0;
 }

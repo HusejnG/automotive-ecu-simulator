@@ -53,7 +53,7 @@ if(BUILD_TESTS)
 
   enable_testing()
 
-  add_executable(ecu_tests tests/test_can_bus.cpp tests/test_bms_node.cpp tests/test_uds_server.cpp)
+  add_executable(ecu_tests tests/test_can_bus.cpp tests/test_bms_node.cpp tests/test_uds_server.cpp tests/test_fault_injection.cpp)
   target_include_directories(ecu_tests PRIVATE include ${bit_protocol_parser_SOURCE_DIR}/include)
   target_link_libraries(ecu_tests PRIVATE gtest_main Threads::Threads)
 
