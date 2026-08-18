@@ -22,7 +22,7 @@ automotive-ecu-simulator/
 │   └── fault_injection/   → Fault injection layer + fail-safe verification
 ├── src/                   → Application entry point / demo driver
 ├── tests/                 → Unit tests (Google Test)
-├── tools/                 → Python test automation and log tooling
+├── tools/                 → Python test harness, codec, and CLI decoder
 └── .github/workflows/     → CI (build + test on push)
 ```
 
@@ -42,7 +42,7 @@ duplicating bit-packing logic here — pulled in directly via CMake
       `ReadDataByIdentifier`, and a `SecurityAccess` seed-key exchange
 - [x] **Fault injection layer** — simulated sensor dropout / bus message
       loss, verifying the BMS transitions to a fail-safe state correctly
-- [ ] **Python tooling** — test automation harness and log parsing/visualization
+- [x] **Python tooling** — test automation harness and log parsing/visualization
 - [x] **Unit tests** covering each module so far (Google Test)
 - [x] **CI** — build + test on every push (Linux & Windows)
 
@@ -252,6 +252,74 @@ And a lossy relay dropping every 2nd frame between the bus and a tester:
 === Fault injection: lossy CAN relay ===
 relay: 4 frames seen, 2 dropped, 2 delivered to tester
 ```
+
+## Python tooling
+
+The C++ tests exercise classes in isolation with hand-fed inputs. The
+Python tooling in `tools/` tests the built program as a black box, which
+is closer to how a real test rig validates an ECU — and mirrors the split
+you see in automotive work, where the ECU software is C/C++ and the test
+tooling around it is Python.
+
+**`run_scenarios.py`** — integration harness. Runs `ecu_simulator --json`
+as a subprocess and asserts on the resulting event stream: that the charge
+cycle reaches `Balancing` at full SoC, that the seed/key exchange actually
+unlocks, that the stuck-sensor fault fires on the *sixth* tick and not
+earlier, that the lossy relay drops exactly two of four frames. Exits
+non-zero on failure, so it runs in CI alongside `ctest`.
+
+```
+$ python3 run_scenarios.py
+Captured 26 events from the simulator
+
+[PASS] BMS charge cycle reaches Balancing at full charge (4 checks)
+[PASS] BMS status frames decode to the expected physical values (6 checks)
+[PASS] UDS DiagnosticSessionControl switches to Extended (2 checks)
+[PASS] UDS SecurityAccess seed/key exchange unlocks the ECU (4 checks)
+[PASS] UDS ReadDataByIdentifier returns live BMS values (3 checks)
+[PASS] Stuck sensor trips a fault only after the streak threshold (7 checks)
+[PASS] Lossy relay drops exactly the expected frames (5 checks)
+
+7/7 scenarios passed
+```
+
+**`signal_codec.py`** — a second, independent implementation of the frame
+decoding, written in Python rather than binding to the C++ code. That's
+deliberate: a diagnostic tool is normally a separate program from the ECU
+software it talks to, often written by a different team. Two independent
+implementations agreeing is a stronger check that the frame format is
+specified correctly than calling the same code twice would be. If someone
+changes the signal layout on one side only, the integration tests fail —
+which is exactly what should happen.
+
+**`decode_frame.py`** — CLI utility for reading raw bus traffic:
+
+```
+$ python3 decode_frame.py --bms "94 70 00 00 50 41"
+BMS status frame:
+  pack_voltage_v       380.00 V
+  pack_current_a         0.00 A
+  state_of_charge       40.00 %
+  temperature_c         25.00 °C
+
+$ python3 decode_frame.py --uds "62 10 01 9c 40"
+UDS positive response: ReadDataByIdentifier
+  data identifier  0x1001
+  pack_voltage_v   400.00 V
+
+$ python3 decode_frame.py --uds "7f 22 12"
+UDS negative response:
+  service   ReadDataByIdentifier
+  rejected  SubFunctionNotSupported
+```
+
+### Why the simulator has a `--json` flag
+
+The first version of the harness scraped the human-readable output, which
+was fragile — editing a log message would break a test that had nothing to
+do with the change. The simulator now emits a structured event stream
+under `--json`, keeping the machine-readable interface separate from the
+prose. The default output is unchanged.
 
 ## Planned extension: real hardware bridge
 

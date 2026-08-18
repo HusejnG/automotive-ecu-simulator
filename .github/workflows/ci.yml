@@ -16,12 +16,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
       - name: Configure
         run: cmake -B build -DCMAKE_BUILD_TYPE=Release
 
       - name: Build
         run: cmake --build build --config Release -j
 
-      - name: Test
+      - name: Unit tests (C++)
         working-directory: build
         run: ctest --output-on-failure -C Release
+
+      - name: Integration scenarios (Python)
+        working-directory: tools
+        run: python run_scenarios.py
