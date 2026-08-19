@@ -4,9 +4,9 @@ A C++ simulation of an automotive electronic control unit (ECU) network:
 a virtual CAN bus, a Battery Management System modeled as an AUTOSAR-style
 software component, UDS diagnostic services, and a fault-injection layer
 to validate fail-safe behavior. Built to demonstrate practical embedded
-and automotive software engineering skills — CAN bus mechanics, AUTOSAR
+and automotive software engineering skills - CAN bus mechanics, AUTOSAR
 component architecture, diagnostic protocols, and safety-oriented testing
-— rather than a single isolated exercise.
+- rather than a single isolated exercise.
 
 **Status: in active development (2026).** This README doubles as the
 project roadmap; sections are checked off as they're implemented.
@@ -28,23 +28,23 @@ automotive-ecu-simulator/
 
 The [bit-protocol-parser](https://github.com/HusejnG/bit-protocol-parser)
 library handles CAN/UDS frame encoding for this project rather than
-duplicating bit-packing logic here — pulled in directly via CMake
+duplicating bit-packing logic here - pulled in directly via CMake
 `FetchContent` as a git dependency.
 
 ## Roadmap
 
-- [x] **Virtual CAN bus** — arbitration by message ID priority, frame
+- [x] **Virtual CAN bus** - arbitration by message ID priority, frame
       structure, publish/subscribe delivery to multiple ECU nodes
-- [x] **BMS ECU node** — AUTOSAR-style software component with a state
+- [x] **BMS ECU node** - AUTOSAR-style software component with a state
       machine (Sleep, Charging, Discharging, Balancing, Fault), sending
       status frames over the virtual bus
-- [x] **UDS diagnostics** — `DiagnosticSessionControl`,
+- [x] **UDS diagnostics** - `DiagnosticSessionControl`,
       `ReadDataByIdentifier`, and a `SecurityAccess` seed-key exchange
-- [x] **Fault injection layer** — simulated sensor dropout / bus message
+- [x] **Fault injection layer** - simulated sensor dropout / bus message
       loss, verifying the BMS transitions to a fail-safe state correctly
-- [x] **Python tooling** — test automation harness and log parsing/visualization
+- [x] **Python tooling** - test automation harness and log parsing/visualization
 - [x] **Unit tests** covering each module so far (Google Test)
-- [x] **CI** — build + test on every push (Linux & Windows)
+- [x] **CI** - build + test on every push (Linux & Windows)
 
 ## AUTOSAR simulation — what this does and doesn't model
 
@@ -57,7 +57,7 @@ between components.
 One thing I'm deliberately not attempting: in a real AUTOSAR toolchain,
 the RTE glue code between components is *generated* from a configuration
 description, not hand-written. Building an actual RTE code generator is
-a substantial undertaking on its own — since I'm still building up my
+a substantial undertaking on its own - since I'm still building up my
 AUTOSAR knowledge, that felt like a good project for later once I've
 worked with the real tooling, rather than something to bolt on here just
 to check a box. `VirtualCanBus` captures the architectural idea (loose
@@ -68,15 +68,15 @@ machinery behind it.
 
 `UdsServer` implements three ISO 14229 services against the BMS node:
 
-- **`0x10` DiagnosticSessionControl** — switch between Default/Programming/
+- **`0x10` DiagnosticSessionControl** - switch between Default/Programming/
   Extended sessions
-- **`0x22` ReadDataByIdentifier** — read live BMS values (pack voltage,
+- **`0x22` ReadDataByIdentifier** - read live BMS values (pack voltage,
   current, state of charge, temperature) by a 2-byte data identifier,
   plus a standard-ish `0xF186` "active session" DID
-- **`0x27` SecurityAccess** — seed/key challenge-response. The seed/key
+- **`0x27` SecurityAccess** - seed/key challenge-response. The seed/key
   transform here is a simple, deterministic XOR (`key = seed ^ 0xA5A5`),
   chosen to demonstrate the challenge-response *mechanism* clearly, not
-  as a real security boundary — production seed/key algorithms are
+  as a real security boundary - production seed/key algorithms are
   OEM-proprietary and considerably more involved.
 
 Sample output from the demo driver, running a full tester sequence
@@ -111,9 +111,9 @@ not a hardcoded one.
 
 Wiring up request/response services exposed a real bug in
 `VirtualCanBus::process()`: when a subscriber's `onFrameReceived()`
-callback called `bus.send()` to publish a response — a diagnostic server
+callback called `bus.send()` to publish a response - a diagnostic server
 answering a request while the bus was still iterating over the batch
-that request came from — the response frame got pushed onto the same
+that request came from - the response frame got pushed onto the same
 `pending_` vector currently being iterated. That's undefined behavior
 (the loop could read a reallocated/invalidated vector), and it did in
 fact segfault one of the UDS tests before the fix.
@@ -122,7 +122,7 @@ The fix: `process()` now swaps `pending_` into a local vector *before*
 iterating, so anything a callback sends during processing lands in a
 fresh queue and is delivered on the *next* `process()` call instead of
 corrupting the current one. This also happens to match real CAN
-behavior more closely — a response is a new arbitration cycle, not an
+behavior more closely - a response is a new arbitration cycle, not an
 instantaneous echo of the request. The CAN bus tests from the previous
 module didn't catch this because nothing in that module ever sent a
 frame from inside a receive callback; it took a request/response
@@ -166,14 +166,14 @@ cooled down -> state: Sleep
 ```
 
 Each status frame is encoded through `bit-protocol-parser`'s
-`SignalSpec`/`encodeFrame` — the same 4-signal, 6-byte layout (pack
+`SignalSpec`/`encodeFrame` - the same 4-signal, 6-byte layout (pack
 voltage, pack current, state of charge, temperature) documented in that
 project's README.
 
 ## Why these specific pieces
 
 Baden-Württemberg's automotive/embedded industry (Bosch, Mercedes, ZF,
-and their suppliers) works daily with CAN, AUTOSAR, and UDS — none of
+and their suppliers) works daily with CAN, AUTOSAR, and UDS - none of
 which are typically covered in a university curriculum. The fault
 injection layer specifically reflects that automotive software is
 safety-critical: "it works" and "it fails safely when something goes
@@ -182,7 +182,7 @@ demonstrate both.
 
 ## Building
 
-Requires a C++17 compiler and CMake 3.16+. No OS-specific code — builds
+Requires a C++17 compiler and CMake 3.16+. No OS-specific code - builds
 identically on Linux, macOS, and Windows (MSVC or MinGW).
 
 ```bash
@@ -257,11 +257,11 @@ relay: 4 frames seen, 2 dropped, 2 delivered to tester
 
 The C++ tests exercise classes in isolation with hand-fed inputs. The
 Python tooling in `tools/` tests the built program as a black box, which
-is closer to how a real test rig validates an ECU — and mirrors the split
+is closer to how a real test rig validates an ECU - and mirrors the split
 you see in automotive work, where the ECU software is C/C++ and the test
 tooling around it is Python.
 
-**`run_scenarios.py`** — integration harness. Runs `ecu_simulator --json`
+**`run_scenarios.py`** - integration harness. Runs `ecu_simulator --json`
 as a subprocess and asserts on the resulting event stream: that the charge
 cycle reaches `Balancing` at full SoC, that the seed/key exchange actually
 unlocks, that the stuck-sensor fault fires on the *sixth* tick and not
@@ -283,7 +283,7 @@ Captured 26 events from the simulator
 7/7 scenarios passed
 ```
 
-**`signal_codec.py`** — a second, independent implementation of the frame
+**`signal_codec.py`** - a second, independent implementation of the frame
 decoding, written in Python rather than binding to the C++ code. That's
 deliberate: a diagnostic tool is normally a separate program from the ECU
 software it talks to, often written by a different team. Two independent
@@ -292,7 +292,7 @@ specified correctly than calling the same code twice would be. If someone
 changes the signal layout on one side only, the integration tests fail —
 which is exactly what should happen.
 
-**`decode_frame.py`** — CLI utility for reading raw bus traffic:
+**`decode_frame.py`** - CLI utility for reading raw bus traffic:
 
 ```
 $ python3 decode_frame.py --bms "94 70 00 00 50 41"
@@ -316,27 +316,27 @@ UDS negative response:
 ### Why the simulator has a `--json` flag
 
 The first version of the harness scraped the human-readable output, which
-was fragile — editing a log message would break a test that had nothing to
+was fragile - editing a log message would break a test that had nothing to
 do with the change. The simulator now emits a structured event stream
 under `--json`, keeping the machine-readable interface separate from the
 prose. The default output is unchanged.
 
 ## Planned extension: real hardware bridge
 
-Right now this is a software-in-the-loop simulation — everything runs
+Right now this is a software-in-the-loop simulation - everything runs
 in-process, with no real CAN hardware involved. A natural next step once
 the core roadmap is done: bridge `VirtualCanBus` to a real ELM327-based
 OBD-II adapter (I have one I've used with FORScan for Ford diagnostics,
 plus a couple of generic ones) over a serial connection, so a real
-diagnostic tool could talk UDS to this simulator — or so this simulator
+diagnostic tool could talk UDS to this simulator - or so this simulator
 could be pointed at data captured from a real vehicle. That would turn
 this from a portfolio demo into an actual software-in-the-loop test rig,
 which is a real, valued pattern in automotive tooling (testing
 diagnostic software without needing real ECU hardware on the bench).
-This isn't implemented yet — noting it here as a deliberate next step,
+This isn't implemented yet - noting it here as a deliberate next step,
 not a finished feature.
 
 ## Related projects
 
-- [concurrent-queue-benchmark](https://github.com/HusejnG/concurrent-queue-benchmark) — mutex vs. lock-free queue benchmark
-- [bit-protocol-parser](https://github.com/HusejnG/bit-protocol-parser) — bit-level CAN/UDS signal codec, integrated here for frame encoding
+- [concurrent-queue-benchmark](https://github.com/HusejnG/concurrent-queue-benchmark) - mutex vs. lock-free queue benchmark
+- [bit-protocol-parser](https://github.com/HusejnG/bit-protocol-parser) - bit-level CAN/UDS signal codec, integrated here for frame encoding
