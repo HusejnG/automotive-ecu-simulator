@@ -20,7 +20,8 @@ include(FetchContent)
 FetchContent_Declare(
   bit_protocol_parser
   GIT_REPOSITORY https://github.com/HusejnG/bit-protocol-parser.git
-  GIT_TAG        main
+  # pinned to a commit so a change in the codec can't silently change this build
+  GIT_TAG        3baaaf38ac35be8952650c2474d2d9e438b4669f
 )
 FetchContent_MakeAvailable(bit_protocol_parser)
 

@@ -12,7 +12,13 @@
 //   0x27 SecurityAccess            -- seed/key challenge-response
 //
 // Positive responses echo the request SID with bit 6 set (SID + 0x40).
-// Negative responses are [0x7F, requestSid, NRC].
+// Negative responses are [0x7F, requestSid, NRC], using the ISO 14229-1
+// codes: 0x12 for an unknown sub-function, 0x13 for a request of the
+// wrong length, 0x31 for an unknown data identifier, and 0x7F when
+// SecurityAccess is requested in the default session.
+//
+// Each request must fit in one CAN frame: there is no ISO-TP (ISO 15765-2)
+// segmentation, so responses longer than 7 bytes aren't supported.
 
 #pragma once
 
@@ -37,10 +43,13 @@ enum class DiagnosticSession : std::uint8_t {
 };
 
 enum class UdsNrc : std::uint8_t {
-    ServiceNotSupported     = 0x11,
-    SubFunctionNotSupported = 0x12,
-    InvalidKey              = 0x35,
-    RequestSequenceError    = 0x24, // e.g. sendKey without a prior requestSeed
+    ServiceNotSupported                    = 0x11,
+    SubFunctionNotSupported                = 0x12,
+    IncorrectMessageLengthOrInvalidFormat  = 0x13,
+    RequestSequenceError                   = 0x24, // e.g. sendKey without a prior requestSeed
+    RequestOutOfRange                      = 0x31, // e.g. unknown data identifier
+    InvalidKey                             = 0x35,
+    ServiceNotSupportedInActiveSession     = 0x7F,
 };
 
 class UdsServer : public ECUNode {
@@ -77,9 +86,9 @@ private:
     // ---- 0x10 DiagnosticSessionControl ------------------------------------
 
     void handleSessionControl(const CanFrame& req) {
-        if (req.dlc < 2) {
+        if (req.dlc != 2) { // SID + session type
             sendNegativeResponse(static_cast<std::uint8_t>(UdsSid::DiagnosticSessionControl),
-                                  UdsNrc::SubFunctionNotSupported);
+                                  UdsNrc::IncorrectMessageLengthOrInvalidFormat);
             return;
         }
         std::uint8_t requestedSession = req.data[1];
@@ -92,9 +101,9 @@ private:
         }
 
         session_ = static_cast<DiagnosticSession>(requestedSession);
-        // Leaving a non-default session drops any security unlock, same
-        // as most real ECUs -- you don't keep privileged access across
-        // an unrelated session change.
+        // Returning to the default session drops any security unlock, same
+        // as real ECUs -- privileged access doesn't outlive the session it
+        // was granted in.
         if (session_ == DiagnosticSession::Default) {
             securityUnlocked_ = false;
         }
@@ -105,9 +114,9 @@ private:
     // ---- 0x22 ReadDataByIdentifier -----------------------------------------
 
     void handleReadDataByIdentifier(const CanFrame& req) {
-        if (req.dlc < 3) {
+        if (req.dlc != 3) { // SID + one 2-byte DID (reading several DIDs at once isn't supported)
             sendNegativeResponse(static_cast<std::uint8_t>(UdsSid::ReadDataByIdentifier),
-                                  UdsNrc::SubFunctionNotSupported);
+                                  UdsNrc::IncorrectMessageLengthOrInvalidFormat);
             return;
         }
         std::uint16_t did = (static_cast<std::uint16_t>(req.data[1]) << 8) | req.data[2];
@@ -123,7 +132,7 @@ private:
             case 0xF186: value = {static_cast<std::uint8_t>(session_)}; break;
             default:
                 sendNegativeResponse(static_cast<std::uint8_t>(UdsSid::ReadDataByIdentifier),
-                                      UdsNrc::SubFunctionNotSupported);
+                                      UdsNrc::RequestOutOfRange);
                 return;
         }
 
@@ -135,15 +144,27 @@ private:
     // ---- 0x27 SecurityAccess ------------------------------------------------
 
     void handleSecurityAccess(const CanFrame& req) {
+        // Like on real ECUs, security access is only offered outside the
+        // default session.
+        if (session_ == DiagnosticSession::Default) {
+            sendNegativeResponse(static_cast<std::uint8_t>(UdsSid::SecurityAccess),
+                                  UdsNrc::ServiceNotSupportedInActiveSession);
+            return;
+        }
         if (req.dlc < 2) {
             sendNegativeResponse(static_cast<std::uint8_t>(UdsSid::SecurityAccess),
-                                  UdsNrc::SubFunctionNotSupported);
+                                  UdsNrc::IncorrectMessageLengthOrInvalidFormat);
             return;
         }
         std::uint8_t subFunction = req.data[1];
         bool isRequestSeed = (subFunction % 2) == 1; // odd = requestSeed, even = sendKey
 
         if (isRequestSeed) {
+            if (req.dlc != 2) {
+                sendNegativeResponse(static_cast<std::uint8_t>(UdsSid::SecurityAccess),
+                                      UdsNrc::IncorrectMessageLengthOrInvalidFormat);
+                return;
+            }
             // Simplified, deterministic "seed" for simulation purposes --
             // a real ECU would use a hardware RNG. Documented as
             // intentionally non-cryptographic; see project README.
@@ -158,7 +179,12 @@ private:
         }
 
         // sendKey
-        if (!seedPending_ || req.dlc < 4) {
+        if (req.dlc != 4) { // SID + sub-function + 2-byte key
+            sendNegativeResponse(static_cast<std::uint8_t>(UdsSid::SecurityAccess),
+                                  UdsNrc::IncorrectMessageLengthOrInvalidFormat);
+            return;
+        }
+        if (!seedPending_) {
             sendNegativeResponse(static_cast<std::uint8_t>(UdsSid::SecurityAccess),
                                   UdsNrc::RequestSequenceError);
             return;

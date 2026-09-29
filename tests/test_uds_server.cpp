@@ -100,14 +100,30 @@ TEST(UdsServer, ReadsLiveBmsVoltage) {
     EXPECT_NEAR(raw * 0.01, 364.80, 0.01);
 }
 
-TEST(UdsServer, ReadUnknownDidReturnsNegativeResponse) {
+TEST(UdsServer, ReadUnknownDidReturnsRequestOutOfRange) {
     UdsFixture f;
     f.sendRequest({0x22, 0xFF, 0xFF}); // no such DID
 
     const CanFrame* resp = f.lastResponse();
     ASSERT_NE(resp, nullptr);
     EXPECT_EQ(resp->data[0], 0x7F);
-    EXPECT_EQ(resp->data[2], static_cast<std::uint8_t>(UdsNrc::SubFunctionNotSupported));
+    EXPECT_EQ(resp->data[2], static_cast<std::uint8_t>(UdsNrc::RequestOutOfRange));
+}
+
+TEST(UdsServer, RequestsOfTheWrongLengthAreRejected) {
+    UdsFixture f;
+
+    f.sendRequest({0x10}); // session type missing
+    const CanFrame* resp = f.lastResponse();
+    ASSERT_NE(resp, nullptr);
+    EXPECT_EQ(resp->data[1], 0x10);
+    EXPECT_EQ(resp->data[2], static_cast<std::uint8_t>(UdsNrc::IncorrectMessageLengthOrInvalidFormat));
+
+    f.sendRequest({0x22, 0x10}); // DID cut short
+    resp = f.lastResponse();
+    ASSERT_NE(resp, nullptr);
+    EXPECT_EQ(resp->data[1], 0x22);
+    EXPECT_EQ(resp->data[2], static_cast<std::uint8_t>(UdsNrc::IncorrectMessageLengthOrInvalidFormat));
 }
 
 TEST(UdsServer, ReadActiveSessionDid) {
@@ -127,8 +143,20 @@ TEST(UdsServer, StartsLocked) {
     EXPECT_FALSE(f.uds.securityUnlocked());
 }
 
+TEST(UdsServer, SecurityAccessIsRejectedInDefaultSession) {
+    UdsFixture f;
+    f.sendRequest({0x27, 0x01}); // requestSeed while still in Default
+
+    const CanFrame* resp = f.lastResponse();
+    ASSERT_NE(resp, nullptr);
+    EXPECT_EQ(resp->data[0], 0x7F);
+    EXPECT_EQ(resp->data[1], 0x27);
+    EXPECT_EQ(resp->data[2], static_cast<std::uint8_t>(UdsNrc::ServiceNotSupportedInActiveSession));
+}
+
 TEST(UdsServer, CorrectKeyUnlocksSecurity) {
     UdsFixture f;
+    f.sendRequest({0x10, 0x03}); // Extended session first
     f.sendRequest({0x27, 0x01}); // requestSeed
     const CanFrame* seedResp = f.lastResponse();
     ASSERT_NE(seedResp, nullptr);
@@ -146,6 +174,7 @@ TEST(UdsServer, CorrectKeyUnlocksSecurity) {
 
 TEST(UdsServer, WrongKeyStaysLocked) {
     UdsFixture f;
+    f.sendRequest({0x10, 0x03}); // Extended session first
     f.sendRequest({0x27, 0x01}); // requestSeed
 
     f.sendRequest({0x27, 0x02, 0x00, 0x00}); // almost certainly wrong
@@ -159,6 +188,7 @@ TEST(UdsServer, WrongKeyStaysLocked) {
 
 TEST(UdsServer, SendKeyWithoutSeedRequestIsRejected) {
     UdsFixture f;
+    f.sendRequest({0x10, 0x03}); // Extended session first
     f.sendRequest({0x27, 0x02, 0x12, 0x34}); // sendKey with no prior requestSeed
 
     EXPECT_FALSE(f.uds.securityUnlocked());
@@ -168,8 +198,9 @@ TEST(UdsServer, SendKeyWithoutSeedRequestIsRejected) {
     EXPECT_EQ(resp->data[2], static_cast<std::uint8_t>(UdsNrc::RequestSequenceError));
 }
 
-TEST(UdsServer, LeavingDefaultSessionResetsSecurityUnlock) {
+TEST(UdsServer, ReturningToDefaultSessionResetsSecurityUnlock) {
     UdsFixture f;
+    f.sendRequest({0x10, 0x03}); // Extended
     f.sendRequest({0x27, 0x01});
     const CanFrame* seedResp = f.lastResponse();
     std::uint16_t seed = (static_cast<std::uint16_t>(seedResp->data[2]) << 8) | seedResp->data[3];
@@ -177,7 +208,6 @@ TEST(UdsServer, LeavingDefaultSessionResetsSecurityUnlock) {
     f.sendRequest({0x27, 0x02, static_cast<std::uint8_t>(key >> 8), static_cast<std::uint8_t>(key & 0xFF)});
     ASSERT_TRUE(f.uds.securityUnlocked());
 
-    f.sendRequest({0x10, 0x03}); // Extended
     f.sendRequest({0x10, 0x01}); // back to Default
 
     EXPECT_FALSE(f.uds.securityUnlocked());

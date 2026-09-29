@@ -3,13 +3,12 @@
 A C++ simulation of an automotive electronic control unit (ECU) network:
 a virtual CAN bus, a Battery Management System modeled as an AUTOSAR-style
 software component, UDS diagnostic services, and a fault-injection layer
-to validate fail-safe behavior. Built to demonstrate practical embedded
-and automotive software engineering skills - CAN bus mechanics, AUTOSAR
-component architecture, diagnostic protocols, and safety-oriented testing
-- rather than a single isolated exercise.
+to validate fail-safe behavior. It brings CAN bus mechanics, AUTOSAR-style
+component architecture, diagnostic protocols and safety-oriented testing
+together in one connected system rather than as separate exercises.
 
-**Status: in active development (2026).** This README doubles as the
-project roadmap; sections are checked off as they're implemented.
+The roadmap below is complete; a planned hardware bridge is described at
+the end.
 
 ## Architecture
 
@@ -73,11 +72,22 @@ machinery behind it.
 - **`0x22` ReadDataByIdentifier** - read live BMS values (pack voltage,
   current, state of charge, temperature) by a 2-byte data identifier,
   plus a standard-ish `0xF186` "active session" DID
-- **`0x27` SecurityAccess** - seed/key challenge-response. The seed/key
-  transform here is a simple, deterministic XOR (`key = seed ^ 0xA5A5`),
-  chosen to demonstrate the challenge-response *mechanism* clearly, not
-  as a real security boundary - production seed/key algorithms are
-  OEM-proprietary and considerably more involved.
+- **`0x27` SecurityAccess** - seed/key challenge-response, only offered
+  outside the default session. The seed/key transform here is a simple,
+  deterministic XOR (`key = seed ^ 0xA5A5`), chosen to demonstrate the
+  challenge-response *mechanism* clearly, not as a real security
+  boundary - production seed/key algorithms are OEM-proprietary and
+  considerably more involved.
+
+Negative responses use the ISO 14229-1 codes: `0x12` unknown
+sub-function, `0x13` wrong message length, `0x24` sendKey without a
+seed, `0x31` unknown data identifier, `0x35` invalid key, and `0x7F`
+SecurityAccess requested in the default session.
+
+**Not modeled:** ISO-TP (ISO 15765-2) segmentation. Every request and
+response here fits in a single 8-byte CAN frame, so multi-frame
+transfers (e.g. a 20-byte response) aren't supported. There's also no
+limit on failed key attempts and no S3 session timeout.
 
 Sample output from the demo driver, running a full tester sequence
 against a live BMS:
@@ -90,22 +100,22 @@ against a live BMS:
 -> SecurityAccess: request seed
   bus delivered frame id=0x7a0 data=27 01
   bus delivered frame id=0x7a8 data=67 01 21 11
--> SecurityAccess: send key (computed from seed 0x2111)
+-> SecurityAccess: send key (computed from the seed just received)
   bus delivered frame id=0x7a0 data=27 02 84 b4
   bus delivered frame id=0x7a8 data=67 02
    security unlocked: yes
 -> ReadDataByIdentifier: pack voltage (DID 0x1001)
   bus delivered frame id=0x7a0 data=22 10 01
-  bus delivered frame id=0x7a8 data=62 10 01 96 64
+  bus delivered frame id=0x7a8 data=62 10 01 9c 40
 -> ReadDataByIdentifier: active session (DID 0xF186)
   bus delivered frame id=0x7a0 data=22 f1 86
   bus delivered frame id=0x7a8 data=62 f1 86 03
 ```
 
-The voltage response (`96 64` = 0x9664 = 38500 raw, ×0.01 = 385.00V)
-matches the BMS's actual charging voltage at that point in the demo —
-confirming the UDS server is reading a live value out of the BMS node,
-not a hardcoded one.
+The voltage response (`9c 40` = 0x9C40 = 40000 raw, ×0.01 = 400.00 V)
+matches the BMS's pack voltage at that point in the demo (the end of the
+charge cycle), confirming that the UDS server reads a live value out of
+the BMS node rather than a hardcoded one.
 
 ### A bug this module surfaced in the CAN bus itself
 
@@ -141,29 +151,24 @@ Discharging --(SoC critically low)--> Fault   (over-discharge protection)
 ```
 
 Sample output from the demo driver (`ecu_simulator`), running a charge
-cycle followed by an over-temperature fault scenario:
+cycle. Each line shows the raw 6-byte status frame the BMS puts on the
+bus:
 
 ```
-=== Charge cycle ===
-  bus delivered frame id=0x200 dlc=6
+=== BMS charge cycle ===
+  bus delivered frame id=0x200 data=94 70 00 00 50 41
 idle -> state: Sleep
-  bus delivered frame id=0x200 dlc=6
+  bus delivered frame id=0x200 data=96 64 00 64 78 43
 charging -> state: Charging
-  bus delivered frame id=0x200 dlc=6
+  bus delivered frame id=0x200 data=9c 40 00 50 c4 45
 near full -> state: Charging
-  bus delivered frame id=0x200 dlc=6
+  bus delivered frame id=0x200 data=9c 40 00 32 c8 46
 full -> state: Balancing
-  bus delivered frame id=0x200 dlc=6
-current stops -> state: Sleep
-
-=== Fault scenario (over-temperature) ===
-  bus delivered frame id=0x200 dlc=6
-discharging -> state: Discharging
-  bus delivered frame id=0x200 dlc=6
-overheating -> state: Fault
-  bus delivered frame id=0x200 dlc=6
-cooled down -> state: Sleep
 ```
+
+The remaining transitions (over-temperature, voltage out of range,
+over-discharge, recovery from Fault) are covered by the unit tests in
+`tests/test_bms_node.cpp`.
 
 Each status frame is encoded through `bit-protocol-parser`'s
 `SignalSpec`/`encodeFrame` - the same 4-signal, 6-byte layout (pack
@@ -172,13 +177,11 @@ project's README.
 
 ## Why these specific pieces
 
-Baden-Württemberg's automotive/embedded industry (Bosch, Mercedes, ZF,
-and their suppliers) works daily with CAN, AUTOSAR, and UDS - none of
-which are typically covered in a university curriculum. The fault
-injection layer specifically reflects that automotive software is
-safety-critical: "it works" and "it fails safely when something goes
-wrong" are different engineering claims, and this project is built to
-demonstrate both.
+CAN, AUTOSAR and UDS are everyday tools in automotive and embedded work,
+and none of them were part of my degree. The fault injection layer
+reflects that automotive software is safety-critical: "it works" and "it
+fails safely when something goes wrong" are different engineering
+claims, and this project tests both.
 
 ## Building
 
@@ -220,10 +223,13 @@ readings before `updateSensors()` sees them:
   reading (e.g. a constant 380V/25°C) doesn't look wrong to a naive
   range check, since nothing about the value itself is out of bounds.
   Only the fact that it never changes is the tell. `BmsNode` now tracks
-  how many consecutive ticks a reading stays bit-identical and treats
-  five in a row as a fault -- a heuristic (real sensor noise means a
-  perfectly constant reading over time is itself suspicious), not a
-  certainty, and documented as such in `bms_node.h`.
+  how many consecutive ticks the whole set of readings (voltage, current,
+  state of charge, temperature) stays bit-identical and treats five in a
+  row as a fault -- a heuristic (real sensor noise means a perfectly
+  constant reading over time is itself suspicious), not a certainty, and
+  documented as such in `bms_node.h`. Known gap: because it compares the
+  whole set, a single frozen channel while the others keep changing isn't
+  caught; per-signal tracking would be the next step.
 
 **`LossyRelay`** sits between the bus and a consumer, deterministically
 dropping every Nth frame instead of forwarding it -- simulating the
@@ -307,10 +313,10 @@ UDS positive response: ReadDataByIdentifier
   data identifier  0x1001
   pack_voltage_v   400.00 V
 
-$ python3 decode_frame.py --uds "7f 22 12"
+$ python3 decode_frame.py --uds "7f 22 31"
 UDS negative response:
   service   ReadDataByIdentifier
-  rejected  SubFunctionNotSupported
+  rejected  RequestOutOfRange
 ```
 
 ### Why the simulator has a `--json` flag
@@ -324,15 +330,15 @@ prose. The default output is unchanged.
 ## Planned extension: real hardware bridge
 
 Right now this is a software-in-the-loop simulation - everything runs
-in-process, with no real CAN hardware involved. A natural next step once
-the core roadmap is done: bridge `VirtualCanBus` to a real ELM327-based
+in-process, with no real CAN hardware involved. A natural next step now
+that the core roadmap is done: bridge `VirtualCanBus` to a real ELM327-based
 OBD-II adapter (I have one I've used with FORScan for Ford diagnostics,
 plus a couple of generic ones) over a serial connection, so a real
 diagnostic tool could talk UDS to this simulator - or so this simulator
-could be pointed at data captured from a real vehicle. That would turn
-this from a portfolio demo into an actual software-in-the-loop test rig,
-which is a real, valued pattern in automotive tooling (testing
-diagnostic software without needing real ECU hardware on the bench).
+could be pointed at data captured from a real vehicle. That would make
+it usable as a small test rig for diagnostic software, a common pattern
+in automotive tooling (testing diagnostic tools without real ECU
+hardware on the bench).
 This isn't implemented yet - noting it here as a deliberate next step,
 not a finished feature.
 

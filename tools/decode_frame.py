@@ -39,8 +39,11 @@ UNITS = {
 NRC_NAMES = {
     0x11: "ServiceNotSupported",
     0x12: "SubFunctionNotSupported",
+    0x13: "IncorrectMessageLengthOrInvalidFormat",
     0x24: "RequestSequenceError",
+    0x31: "RequestOutOfRange",
     0x35: "InvalidKey",
+    0x7F: "ServiceNotSupportedInActiveSession",
 }
 
 SERVICE_NAMES = {
